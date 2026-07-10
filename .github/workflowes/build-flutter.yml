@@ -1,0 +1,57 @@
+name: Build Flutter APK (Fallback Worker)
+
+on:
+  workflow_dispatch:
+    inputs:
+      jobId:
+        description: 'Job ID from Bot'
+        required: true
+      userId:
+        description: 'User ID'
+        required: true
+      payload:
+        description: 'Build Payload (JSON)'
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0'
+          channel: 'stable'
+
+      - name: Prepare Project
+        run: |
+          # Payload contains URL or file info
+          # For URL mode:
+          URL=$(echo '${{ github.event.inputs.payload }}' | jq -r '.url')
+          if [ "$URL" != "null" ]; then
+            wget -O project.zip "$URL"
+            unzip project.zip -d project
+            cd project
+          fi
+
+      - name: Build APK
+        run: |
+          cd project
+          flutter clean
+          flutter pub get
+          flutter build apk --release
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ github.event.inputs.jobId }}
+          path: project/build/app/outputs/flutter-apk/app-release.apk
