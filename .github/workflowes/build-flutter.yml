@@ -29,29 +29,81 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.0'
           channel: 'stable'
+          # Sengaja tidak di-pin ke versi lama: pakai stable terbaru biar
+          # selalu cocok sama Dart SDK yang diminta package-package terbaru.
 
       - name: Prepare Project
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Payload contains URL or file info
-          # For URL mode:
-          URL=$(echo '${{ github.event.inputs.payload }}' | jq -r '.url')
-          if [ "$URL" != "null" ]; then
-            wget -O project.zip "$URL"
-            unzip project.zip -d project
-            cd project
+          set -e
+          echo '${{ github.event.inputs.payload }}' > payload.json
+          cat payload.json
+
+          # Bot bisa kirim salah satu dari 2 field ini tergantung mode upload
+          ASSET_URL=$(jq -r '.zipAssetUrl // .url // empty' payload.json)
+
+          if [ -z "$ASSET_URL" ]; then
+            echo "::error::Tidak ada zipAssetUrl atau url di payload. Isi payload:"
+            cat payload.json
+            exit 1
           fi
+
+          echo "Downloading project source from: $ASSET_URL"
+
+          rm -rf project project.zip
+          mkdir -p project
+
+          if [[ "$ASSET_URL" == *"api.github.com"* ]]; then
+            # GitHub Release asset API url -> perlu auth header + Accept octet-stream
+            curl -fL \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/octet-stream" \
+              -o project.zip \
+              "$ASSET_URL"
+          else
+            # Public URL biasa
+            curl -fL -o project.zip "$ASSET_URL"
+          fi
+
+          unzip -q project.zip -d project
+
+          # Beberapa ZIP punya folder pembungkus tambahan (mis: project/myapp/pubspec.yaml)
+          # Auto-detect lokasi pubspec.yaml biar gak salah cd
+          PUBSPEC=$(find project -maxdepth 5 -type f -name pubspec.yaml | head -n 1)
+          if [ -z "$PUBSPEC" ]; then
+            echo "::error::pubspec.yaml tidak ditemukan di dalam ZIP. Pastikan ini project Flutter yang valid."
+            find project -maxdepth 3
+            exit 1
+          fi
+
+          PROJECT_ROOT=$(dirname "$PUBSPEC")
+          echo "PROJECT_ROOT=$PROJECT_ROOT" >> "$GITHUB_ENV"
+          echo "Detected Flutter project root: $PROJECT_ROOT"
 
       - name: Build APK
         run: |
-          cd project
+          set -e
+          cd "$PROJECT_ROOT"
           flutter clean
           flutter pub get
           flutter build apk --release
+
+      - name: Locate APK
+        run: |
+          set -e
+          APK_PATH=$(find "$PROJECT_ROOT" -type f -name "app-release.apk" -path "*/flutter-apk/*" | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "::error::app-release.apk tidak ditemukan setelah build."
+            find "$PROJECT_ROOT/build" -maxdepth 5 2>/dev/null || true
+            exit 1
+          fi
+          echo "APK_PATH=$APK_PATH" >> "$GITHUB_ENV"
+          echo "Found APK at: $APK_PATH"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: apk-${{ github.event.inputs.jobId }}
-          path: project/build/app/outputs/flutter-apk/app-release.apk
+          path: ${{ env.APK_PATH }}
