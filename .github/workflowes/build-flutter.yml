@@ -29,9 +29,11 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.38.0'
           channel: 'stable'
-          # Sengaja tidak di-pin ke versi lama: pakai stable terbaru biar
-          # selalu cocok sama Dart SDK yang diminta package-package terbaru.
+          # Disamain PERSIS dengan versi yang dipakai installer VPS
+          # (lihat worker/installer.js -> flutter_linux_3.38.0-stable.tar.xz)
+          # biar hasil build di GitHub Actions konsisten sama VPS.
 
       - name: Prepare Project
         env:
